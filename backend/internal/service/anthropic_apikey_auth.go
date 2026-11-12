@@ -49,13 +49,22 @@ func isOllamaCloudAnthropicAuthBaseURL(baseURL string) bool {
 // 其它上游保持历史 extra/default 行为。baseURL 为该请求实际选用的 Anthropic
 // 上游 base（GetBaseURL / GetAnthropicProtocolBaseURL 等），默认官方端点时传空。
 func setAnthropicAPIKeyAuthHeader(header http.Header, account *Account, token, baseURL string) {
-	if account.Type == AccountTypeAPIKey && isOllamaCloudAnthropicAuthBaseURL(baseURL) {
+	if account != nil && account.Type == AccountTypeAPIKey && isOllamaCloudAnthropicAuthBaseURL(baseURL) {
 		header.Set("Authorization", "Bearer "+token)
 		return
 	}
-	if account.GetAnthropicAPIKeyAuthScheme() == AnthropicAPIKeyAuthSchemeAuthorizationBearer {
-		header.Set("Authorization", "Bearer "+token)
+	// 头名映射交给上游适配器（internal/upstream.ClaudeAdapter）；方案判定
+	// （Ollama Cloud 特例、extra 里的 auth scheme）仍留在 service。
+	headers, err := claudeUpstreamAuth.AuthHeaders(account.anthropicAPIKeyCredentials(token))
+	if err != nil {
+		// 历史行为：组装认证头永远不让请求失败。空 token 也照常写原生头，
+		// 由上游返回它自己的 401，而不是我们凭空造一个错误。
+		if account.GetAnthropicAPIKeyAuthScheme() == AnthropicAPIKeyAuthSchemeAuthorizationBearer {
+			header.Set("Authorization", "Bearer "+token)
+			return
+		}
+		header.Set("x-api-key", token)
 		return
 	}
-	header.Set("x-api-key", token)
+	copyUpstreamAuthHeaders(header, headers)
 }
